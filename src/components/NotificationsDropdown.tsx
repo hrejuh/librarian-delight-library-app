@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,110 +6,33 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Bell, Check, BookOpen, AlertCircle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { Bell, BookOpen, AlertCircle, Clock, DollarSign, Check } from "lucide-react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 
-interface Notification {
-  id: string;
-  user_id: string;
-  type: string;
-  title: string;
-  message: string;
-  is_read: boolean;
-  created_at: string;
-  metadata: {
-    queue_id?: string;
-    book_id?: string;
-    [key: string]: any;
-  };
-}
-
-export const NotificationsDropdown = () => {
-  const { user } = useAuth();
+const NotificationsDropdown = () => {
+  const { profile } = useAuth();
   const { toast } = useToast();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      fetchNotifications();
-      // Subscribe to new notifications
-      const channel = supabase
-        .channel('notifications')
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
-        }, (payload) => {
-          const newNotification = {
-            ...payload.new,
-            metadata: payload.new.metadata as Notification['metadata']
-          } as Notification;
-          setNotifications(prev => [newNotification, ...prev]);
-          setUnreadCount(prev => prev + 1);
-        })
-        .subscribe();
+  const notifications = useQuery(
+    api.notifications.listByUser,
+    profile?.userId ? { userId: profile.userId, limit: 10 } : "skip",
+  );
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [user]);
+  const markAsReadMutation = useMutation(api.notifications.markAsRead);
+  const markAllAsReadMutation = useMutation(api.notifications.markAllAsRead);
 
-  const fetchNotifications = async () => {
-    if (!user) return;
-
-    try {
-      setIsLoading(true);
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-
-      // Cast the data to our Notification type
-      const typedData = (data || []).map(notification => ({
-        ...notification,
-        metadata: notification.metadata as Notification['metadata']
-      }));
-
-      setNotifications(typedData);
-      setUnreadCount(typedData.filter(n => !n.is_read).length);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch notifications",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const isLoading = notifications === undefined;
+  const notificationList = notifications ?? [];
+  const unreadCount = notificationList.filter((n) => !n.isRead).length;
 
   const markAsRead = async (notificationId: string) => {
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId);
-
-      if (error) throw error;
-
-      setNotifications(prev =>
-        prev.map(n =>
-          n.id === notificationId ? { ...n, is_read: true } : n
-        )
-      );
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error: any) {
+      await markAsReadMutation({ id: notificationId as any });
+    } catch {
       toast({
         title: "Error",
         description: "Failed to mark notification as read",
@@ -120,22 +42,10 @@ export const NotificationsDropdown = () => {
   };
 
   const markAllAsRead = async () => {
-    if (!user || notifications.length === 0) return;
-
+    if (!profile?.userId || notificationList.length === 0) return;
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('user_id', user.id)
-        .eq('is_read', false);
-
-      if (error) throw error;
-
-      setNotifications(prev =>
-        prev.map(n => ({ ...n, is_read: true }))
-      );
-      setUnreadCount(0);
-    } catch (error: any) {
+      await markAllAsReadMutation({ userId: profile.userId });
+    } catch {
       toast({
         title: "Error",
         description: "Failed to mark all notifications as read",
@@ -146,76 +56,94 @@ export const NotificationsDropdown = () => {
 
   const getNotificationIcon = (type: string) => {
     switch (type) {
-      case 'book_available':
-        return <BookOpen className="h-4 w-4 text-green-500" />;
-      case 'queue_joined':
-        return <AlertCircle className="h-4 w-4 text-blue-500" />;
+      case "hold_ready":
+      case "request_approved":
+        return <BookOpen className="h-4 w-4 text-green-500 shrink-0" />;
+      case "overdue":
+      case "request_rejected":
+        return <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />;
+      case "due_reminder":
+        return <Clock className="h-4 w-4 text-amber-500 shrink-0" />;
+      case "fine_added":
+        return <DollarSign className="h-4 w-4 text-red-500 shrink-0" />;
       default:
-        return <Bell className="h-4 w-4 text-gray-500" />;
+        return <Bell className="h-4 w-4 text-muted-foreground shrink-0" />;
     }
   };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative">
-          <Bell className="h-5 w-5" />
+        <Button variant="ghost" size="icon" className="relative">
+          <Bell className="h-4 w-4" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
+            <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-destructive text-destructive-foreground text-[10px] flex items-center justify-center">
               {unreadCount}
             </span>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <div className="flex items-center justify-between px-4 py-2">
-          <h4 className="font-medium">Notifications</h4>
+        <div className="flex items-center justify-between px-3 py-2">
+          <h4 className="text-sm font-medium">Notifications</h4>
           {unreadCount > 0 && (
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs text-blue-600 hover:text-blue-700"
+              className="text-xs h-auto py-1"
               onClick={markAllAsRead}
             >
-              Mark all as read
+              <Check className="h-3 w-3 mr-1" />
+              Mark all read
             </Button>
           )}
         </div>
         <DropdownMenuSeparator />
         {isLoading ? (
-          <div className="p-4 text-center text-sm text-gray-500">
-            Loading notifications...
+          <div className="p-4 text-center text-sm text-muted-foreground">
+            Loading...
           </div>
-        ) : notifications.length === 0 ? (
-          <div className="p-4 text-center text-sm text-gray-500">
+        ) : notificationList.length === 0 ? (
+          <div className="p-4 text-center text-sm text-muted-foreground">
             No notifications
           </div>
         ) : (
-          notifications.map(notification => (
-            <DropdownMenuItem
-              key={notification.id}
-              className={`p-4 ${!notification.is_read ? 'bg-gray-50' : ''}`}
-              onClick={() => markAsRead(notification.id)}
-            >
-              <div className="flex gap-3">
-                {getNotificationIcon(notification.type)}
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium text-sm">{notification.title}</p>
-                    {!notification.is_read && (
-                      <span className="h-2 w-2 rounded-full bg-blue-500" />
-                    )}
+          <div className="max-h-80 overflow-y-auto">
+            {notificationList.map((notification) => (
+              <DropdownMenuItem
+                key={notification._id}
+                className={`px-3 py-2.5 cursor-pointer ${!notification.isRead ? "bg-muted/50" : ""}`}
+                onClick={() => markAsRead(notification._id)}
+              >
+                <div className="flex gap-2.5 w-full">
+                  {getNotificationIcon(notification.type)}
+                  <div className="flex-1 min-w-0 space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-sm truncate">
+                        {notification.title}
+                      </p>
+                      {!notification.isRead && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {notification.message}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {formatDistanceToNow(
+                        new Date(notification.createdAt ?? notification._creationTime),
+                        { addSuffix: true },
+                      )}
+                    </p>
                   </div>
-                  <p className="text-sm text-gray-600">{notification.message}</p>
-                  <p className="text-xs text-gray-400">
-                    {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-                  </p>
                 </div>
-              </div>
-            </DropdownMenuItem>
-          ))
+              </DropdownMenuItem>
+            ))}
+          </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}; 
+};
+
+export default NotificationsDropdown;

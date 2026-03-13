@@ -1,236 +1,142 @@
-import { useEffect, useState } from "react";
-import Header from "@/components/Header";
-import { Loader2, Pencil, Trash2, Eye, Building, MapPin, Phone } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { useState } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Loader2, Pencil, Trash2, Building, MapPin, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Database } from "@/integrations/supabase/types";
 import { AddLibraryModal } from "@/components/AddLibraryModal";
-import { ViewLibraryModal } from "@/components/ViewLibraryModal";
 
-type Library = Database["public"]["Tables"]["libraries"]["Row"] & {
-  institutions?: {
-    name: string;
-  };
+type Library = {
+  _id: string;
+  name: string;
+  address: string;
+  institutionId: string;
+  contactInfo?: any;
+  institutionName?: string;
+  [key: string]: any;
 };
 
 const Libraries = () => {
-  const [libraries, setLibraries] = useState<Library[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [libraryToDelete, setLibraryToDelete] = useState<Library | null>(null);
-  const [showAddLibraryModal, setShowAddLibraryModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [selectedLibrary, setSelectedLibrary] = useState<Library | null>(null);
-  const [showViewLibraryModal, setShowViewLibraryModal] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    fetchLibraries();
-  }, []);
+  const librariesData = useQuery(api.libraries.listWithInstitution, {});
+  const removeLibrary = useMutation(api.libraries.remove);
 
-  const fetchLibraries = async () => {
-    setIsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("libraries")
-        .select(`
-          *,
-          institutions (
-            name
-          )
-        `);
+  const isLoading = librariesData === undefined;
+  const libraries: Library[] = (librariesData ?? []) as Library[];
 
-      if (error) throw error;
-      setLibraries(data || []);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch libraries: " + error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleDeleteLibraryClick = (library: Library) => {
-    setLibraryToDelete(library);
-    setShowDeleteDialog(true);
-  };
-
-  const handleConfirmDeleteLibrary = async () => {
+  const handleConfirmDelete = async () => {
     if (!libraryToDelete) return;
     try {
-      const { error } = await supabase
-        .from("libraries")
-        .delete()
-        .eq("id", libraryToDelete.id);
-
-      if (error) throw error;
-
-      toast({
-        title: "Success",
-        description: "Library deleted successfully",
-      });
-      setShowDeleteDialog(false);
-      setLibraryToDelete(null);
-      fetchLibraries();
+      await removeLibrary({ id: libraryToDelete._id as any });
+      toast({ title: "Library deleted" });
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: "Failed to delete library: " + error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
-  };
-
-  const handleEditLibraryClick = (library: Library) => {
-    setSelectedLibrary(library);
-    setShowAddLibraryModal(true);
-  };
-
-  const handleViewLibraryClick = (library: Library) => {
-    setSelectedLibrary(library);
-    setShowViewLibraryModal(true);
+    setShowDeleteDialog(false);
+    setLibraryToDelete(null);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <main className="max-w-7xl mx-auto px-4 py-8 mt-16">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold">Libraries</h1>
-          <Button
-            className="bg-library-primary hover:bg-blue-700"
-            onClick={() => {
-              setSelectedLibrary(null);
-              setShowAddLibraryModal(true);
-            }}
-          >
-            Add Library
-          </Button>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Libraries</h1>
+        <Button onClick={() => { setSelectedLibrary(null); setShowAddModal(true); }}>
+          <Plus className="h-4 w-4 mr-1" />
+          Add Library
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-
-        {isLoading ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-          </div>
-        ) : libraries.length === 0 ? (
-          <div className="text-center py-12 border rounded-md bg-gray-50">
-            <Building className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 font-medium">No libraries found.</p>
-            <p className="text-sm text-gray-500">Click "Add Library" to get started.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {libraries.map((library) => (
-              <div
-                key={library.id}
-                className="bg-white shadow-md rounded-lg p-6 flex flex-col gap-2 relative hover:shadow-lg hover:bg-gray-50 transition-all duration-200 cursor-pointer group"
-                onClick={() => handleViewLibraryClick(library)}
-              >
-                <div className="absolute top-2 right-2 flex gap-2 z-10">
-                  <button
-                    className="p-1 rounded hover:bg-gray-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditLibraryClick(library);
-                    }}
-                    title="Edit Library"
+      ) : libraries.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <Building className="h-12 w-12 mb-4" />
+            <p className="text-lg font-medium">No libraries found</p>
+            <p className="text-sm">Add a library to get started.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {libraries.map((library) => (
+            <Card
+              key={library._id}
+              className="hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => { setSelectedLibrary(library); setShowAddModal(true); }}
+            >
+              <CardContent className="p-4 relative">
+                <div className="absolute top-2 right-2 flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => { e.stopPropagation(); setSelectedLibrary(library); setShowAddModal(true); }}
                   >
-                    <Pencil className="h-4 w-4 text-blue-600" />
-                  </button>
-                  <button
-                    className="p-1 rounded hover:bg-gray-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteLibraryClick(library);
-                    }}
-                    title="Delete Library"
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive"
+                    onClick={(e) => { e.stopPropagation(); setLibraryToDelete(library); setShowDeleteDialog(true); }}
                   >
-                    <Trash2 className="h-4 w-4 text-red-600" />
-                  </button>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-
-                <div className="flex gap-4">
-                  <Building className="h-6 w-6 text-library-primary flex-shrink-0 mt-1" />
-                  <div>
-                    <h2 className="text-xl font-semibold mb-2 truncate" title={library.name}>
-                      {library.name}
-                    </h2>
-                    <div className="space-y-2 text-sm text-gray-600">
-                      <div className="flex items-start">
-                        <MapPin className="h-4 w-4 mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
-                        <span className="truncate" title={library.address}>
-                          {library.address}
-                        </span>
-                      </div>
-                      {library.contact_info && typeof library.contact_info === 'object' && 'phone' in library.contact_info && (
-                        <div className="flex items-center">
-                          <Phone className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
-                          <span>{library.contact_info.phone || "N/A"}</span>
-                        </div>
-                      )}
+                <div className="flex gap-3">
+                  <Building className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <h2 className="font-semibold truncate pr-16">{library.name}</h2>
+                    <div className="flex items-start gap-1 mt-1 text-sm text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span className="truncate">{library.address}</span>
                     </div>
                   </div>
                 </div>
-
-                <div className="mt-4 pt-4 border-t">
-                  <Badge variant="outline" className="text-sm">
-                    {library.institutions?.name || "Unknown Institution"}
+                <div className="mt-3 pt-3 border-t">
+                  <Badge variant="outline">
+                    {library.institutionName || "Unknown Institution"}
                   </Badge>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
-        {showDeleteDialog && libraryToDelete && (
-          <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Delete Library</DialogTitle>
-              </DialogHeader>
-              <div>
-                Are you sure you want to delete "{libraryToDelete.name}"? This action cannot be undone.
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
-                  Cancel
-                </Button>
-                <Button variant="destructive" onClick={handleConfirmDeleteLibrary}>
-                  Delete
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
+      <AddLibraryModal
+        isOpen={showAddModal}
+        onClose={() => { setShowAddModal(false); setSelectedLibrary(null); }}
+        onSuccess={() => { setShowAddModal(false); setSelectedLibrary(null); }}
+        library={selectedLibrary || undefined}
+      />
 
-        <AddLibraryModal
-          isOpen={showAddLibraryModal}
-          onClose={() => {
-            setShowAddLibraryModal(false);
-            setSelectedLibrary(null);
-          }}
-          onSuccess={fetchLibraries}
-          library={selectedLibrary || undefined}
-        />
-
-        {selectedLibrary && (
-          <ViewLibraryModal
-            isOpen={showViewLibraryModal}
-            onClose={() => {
-              setShowViewLibraryModal(false);
-              setSelectedLibrary(null);
-            }}
-            library={selectedLibrary}
-          />
-        )}
-      </main>
+      {showDeleteDialog && libraryToDelete && (
+        <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Library</DialogTitle>
+            </DialogHeader>
+            <p>Are you sure you want to delete "{libraryToDelete.name}"? This cannot be undone.</p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleConfirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
 
-export default Libraries; 
+export default Libraries;

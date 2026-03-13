@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,97 +26,94 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Institution, Level4UserConfig } from "@/lib/data-types";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useAction } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 const formSchema = z.object({
-  email: z.string().email({ message: "Invalid email address" }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  userType: z.string().nonempty({ message: "User type is required" }),
-  institution_id: z.string().nonempty({ message: "Institution is required" }),
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  name: z.string().optional(),
+  role: z.enum(["student", "librarian", "admin"]),
+  institutionId: z.string().min(1, "Institution is required"),
+  userType: z.string().optional(),
 });
 
 interface AddUserModalProps {
+  isOpen: boolean;
   onClose: () => void;
-  onSave: (data: z.infer<typeof formSchema>) => void;
-  institutions: Institution[];
 }
 
-export const AddUserModal = ({ onClose, onSave, institutions }: AddUserModalProps) => {
+export default function AddUserModal({ isOpen, onClose }: AddUserModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [userTypes, setUserTypes] = useState<Level4UserConfig[]>([]);
-  const { profile } = useAuth();
+  const { profile, isSuperAdmin } = useAuth();
+  const { toast } = useToast();
+
+  const institutions = useQuery(api.institutions.list) ?? [];
+  const createUser = useAction(api.actions.createUser.createUser);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       email: "",
       password: "",
+      name: "",
+      role: "student",
+      institutionId: profile?.institutionId ?? "",
       userType: "",
-      institution_id: profile?.institution_id || "",
     },
   });
 
-  // Fetch user types when institution changes
-  useEffect(() => {
-    const fetchUserTypes = async () => {
-      const institutionId = form.getValues("institution_id");
-      if (!institutionId) return;
-
-      const { data, error } = await supabase
-        .from('institutions')
-        .select('organization_structure')
-        .eq('id', institutionId)
-        .single();
-
-      if (error || !data?.organization_structure) {
-        console.error('Error fetching institution settings:', error);
-        return;
-      }
-
-      const orgStructure = data.organization_structure as {
-        level4?: {
-          configs?: Level4UserConfig[];
-        };
-      };
-
-      if (orgStructure.level4?.configs) {
-        setUserTypes(orgStructure.level4.configs);
-      }
-    };
-
-    fetchUserTypes();
-  }, [form.watch("institution_id")]);
-
   const handleSubmit = async (values: z.infer<typeof formSchema>) => {
     setIsSubmitting(true);
-    
     try {
-      await onSave(values);
+      await createUser({
+        email: values.email,
+        password: values.password,
+        name: values.name || undefined,
+        role: values.role,
+        institutionId: values.institutionId as any,
+        userType: values.userType || undefined,
+      });
+      toast({ title: "User created successfully" });
+      form.reset();
       onClose();
-    } catch (error) {
-      console.error("Error adding user:", error);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const isSuperAdmin = profile?.role === "super_admin";
-
   return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px]" aria-describedby="add-user-description">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-bold">Add New User</DialogTitle>
+          <DialogTitle>Add New User</DialogTitle>
         </DialogHeader>
-
-        <div id="add-user-description" className="sr-only">
-          Add a new user to the library system by entering their email and role
-        </div>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Full name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="email"
@@ -130,7 +127,7 @@ export const AddUserModal = ({ onClose, onSave, institutions }: AddUserModalProp
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
               name="password"
@@ -138,58 +135,58 @@ export const AddUserModal = ({ onClose, onSave, institutions }: AddUserModalProp
                 <FormItem>
                   <FormLabel>Password</FormLabel>
                   <FormControl>
-                    <Input type="password" placeholder="******" {...field} />
+                    <Input type="password" placeholder="Min 6 characters" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
-              name="userType"
+              name="role"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>User Type</FormLabel>
+                  <FormLabel>Role</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select a user type" />
+                        <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {userTypes.map((type) => (
-                        <SelectItem key={type.id} value={type.name}>
-                          {type.name}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="student">Student</SelectItem>
+                      <SelectItem value="librarian">Librarian</SelectItem>
+                      {(isSuperAdmin || profile?.role === "admin") && (
+                        <SelectItem value="admin">Admin</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
-              name="institution_id"
+              name="institutionId"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Institution</FormLabel>
-                  <Select 
-                    onValueChange={field.onChange} 
+                  <Select
+                    onValueChange={field.onChange}
                     defaultValue={field.value}
-                    disabled={!isSuperAdmin && profile?.institution_id !== undefined}
+                    disabled={!isSuperAdmin && !!profile?.institutionId}
                   >
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select an institution" />
+                        <SelectValue placeholder="Select institution" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {institutions.map(institution => (
-                        <SelectItem key={institution.id} value={institution.id}>
-                          {institution.name}
+                      {institutions.map((inst) => (
+                        <SelectItem key={inst._id} value={inst._id}>
+                          {inst.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -200,20 +197,18 @@ export const AddUserModal = ({ onClose, onSave, institutions }: AddUserModalProp
             />
 
             <DialogFooter>
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={onClose}
-                disabled={isSubmitting}
-              >
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button 
-                type="submit" 
-                disabled={isSubmitting}
-                className="bg-library-primary"
-              >
-                {isSubmitting ? "Adding..." : "Add User"}
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                    Adding...
+                  </>
+                ) : (
+                  "Add User"
+                )}
               </Button>
             </DialogFooter>
           </form>
@@ -221,4 +216,4 @@ export const AddUserModal = ({ onClose, onSave, institutions }: AddUserModalProp
       </DialogContent>
     </Dialog>
   );
-};
+}

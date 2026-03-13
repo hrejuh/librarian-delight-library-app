@@ -1,470 +1,302 @@
-import { useState, useEffect } from "react";
-import Header from "@/components/Header";
-import { Button } from "@/components/ui/button";
-import { EditBookModal } from "../components/EditBookModal";
-import { ViewBookModal } from "@/components/ViewBookModal";
-import { Book, InstitutionSettings } from "@/lib/data-types";
-import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { useAuth } from "@/contexts/AuthContext";
-import SearchFilterBar from "@/components/SearchFilterBar";
-import { BookCard } from "@/components/BookCard";
-import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Search,
+  Plus,
+  BookOpen,
+  Loader2,
+  Grid3X3,
+  List,
+} from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { AddBookDialog } from "@/components/AddBookDialog";
 
-interface BookWithNextSlot extends Book {
-  nextAvailableSlot?: string | null;
-}
-
-interface User {
-  id: string;
-  email: string;
-  user_metadata?: {
-    institution_id?: string;
-  };
-}
-
-const Books = () => {
-  const [books, setBooks] = useState<BookWithNextSlot[]>([]);
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const [modalType, setModalType] = useState<"view" | "edit" | "add" | "borrow" | null>(null);
+export default function Books() {
+  const { profile, isStudent } = useAuth();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterGenre, setFilterGenre] = useState("all");
-  const [isLoading, setIsLoading] = useState(true);
-  const [institutionSettings, setInstitutionSettings] = useState<InstitutionSettings | null>(null);
-  const { toast } = useToast();
-  const { profile, user } = useAuth();
-  const processingBooks = new Set<string>();
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [showAddBook, setShowAddBook] = useState(false);
 
-  useEffect(() => {
-    // Only fetch books if we have a profile and haven't loaded books yet
-    if (profile) {
-      fetchBooks();
-      fetchInstitutionSettings();
-    }
+  const isStaff = !isStudent;
 
-    // Subscribe to real-time updates for books
-    const subscription = supabase
-      .channel('books_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'books',
-          filter: `institution_id=eq.${profile?.institution_id}`
-        },
-        (payload) => {
-          console.log('Real-time update received:', payload);
-          fetchBooks(); // Reload books when any change occurs
-        }
-      )
-      .subscribe();
+  // Use paginated query for the book list
+  const {
+    results: books,
+    status: paginationStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.books.listByInstitution,
+    profile?.institutionId
+      ? { institutionId: profile.institutionId }
+      : "skip",
+    { initialNumItems: 50 },
+  );
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [profile]);
+  // Use search index when searching
+  const searchResults = useQuery(
+    api.books.search,
+    profile?.institutionId && searchQuery.trim().length >= 2
+      ? { institutionId: profile.institutionId, searchQuery }
+      : "skip",
+  );
 
-  const fetchInstitutionSettings = async () => {
-    if (!profile?.institution_id) return;
-    
-    const { data, error } = await supabase
-      .from('institutions')
-      .select('organization_structure')
-      .eq('id', profile.institution_id)
-      .single();
+  const genres = useQuery(api.genres.list);
+  const createBook = useMutation(api.books.create);
+  const borrowBook = useMutation(api.borrowings.borrowBook);
 
-    if (!error && data?.organization_structure) {
-      const orgStructure = data.organization_structure as {
-        level4?: {
-          configs?: Array<{
-            name: string;
-            reservation_duration?: number;
-            loan_duration?: number;
-            fine_per_day?: number;
-            max_books?: number;
-          }>;
-        };
-      };
+  const displayBooks = searchQuery.trim().length >= 2
+    ? searchResults ?? []
+    : books ?? [];
 
-      const studentConfig = orgStructure.level4?.configs?.find(
-        (config) => config.name === "Students"
-      );
-
-      if (studentConfig) {
-        setInstitutionSettings({
-          reserve_duration_days: studentConfig.reservation_duration || 7,
-          loan_duration_days: studentConfig.loan_duration || 14,
-          late_fine_per_day: studentConfig.fine_per_day || 1.00,
-          collection_window_hours: 24, // Default value
-          max_books_per_user: studentConfig.max_books || 5,
-          max_active_requests: 3, // Default value
-        });
-      }
-    }
-  };
-
-  const fetchBooks = async () => {
-    if (!profile?.institution_id) {
-      return;
-    }
-    try {
-      const { data: booksData, error: booksError } = await supabase
-        .from("books")
-        .select("*")
-        .eq("institution_id", profile.institution_id);
-
-      if (booksError) throw booksError;
-
-      // Use the available and total columns directly from the books table
-      const booksWithStatus = booksData?.map(book => ({
-        ...book,
-        status: book.available > 0 ? "Available" as const : "Borrowed" as const,
-        nextAvailableSlot: null
-      })) || [];
-
-      setBooks(booksWithStatus);
-      setIsLoading(false);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-      setIsLoading(false);
-    }
-  };
+  const filteredBooks = useMemo(() => {
+    if (filterGenre === "all") return displayBooks;
+    return displayBooks.filter((b) =>
+      b.genres?.some((g) => g.toLowerCase() === filterGenre.toLowerCase()),
+    );
+  }, [displayBooks, filterGenre]);
 
   const handleBorrow = async (bookId: string) => {
-    if (!user) {
-      toast({
-        title: "Error",
-        description: "You must be logged in to request a book",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!profile?.institution_id) {
-      toast({
-        title: "Error",
-        description: "You must be associated with an institution to request a book",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (processingBooks.has(bookId)) {
-      return;
-    }
-
+    if (!profile?.institutionId) return;
     try {
-      processingBooks.add(bookId);
-
-      const expirationDate = new Date();
-      expirationDate.setDate(expirationDate.getDate() + (institutionSettings?.reserve_duration_days || 0));
-      expirationDate.setHours(23, 59, 59, 999);
-
-      // Call the borrow_book function
-      const { data: requestId, error: borrowError } = await supabase
-        .rpc('borrow_book', {
-          p_book_id: bookId,
-          p_user_id: user.id,
-          p_institution_id: profile.institution_id,
-          p_expiration_date: expirationDate.toISOString()
-        });
-
-      if (borrowError) {
-        throw borrowError;
-      }
-
-      // Update local state - only modify available count
-      setBooks((prevBooks) =>
-        prevBooks.map((b) =>
-          b.id === bookId
-            ? {
-                ...b,
-                available: b.available - 1,
-                status: b.available - 1 === 0 ? "Borrowed" : "Available"
-              }
-            : b
-        )
-      );
-
-      toast({
-        title: "Success",
-        description: `Book request submitted successfully. Please collect the book from the library within ${institutionSettings?.reserve_duration_days} days.`,
+      await borrowBook({
+        bookId: bookId as any,
+        institutionId: profile.institutionId,
       });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to submit the book request",
-        variant: "destructive",
-      });
-    } finally {
-      processingBooks.delete(bookId);
+      toast({ title: "Request submitted", description: "Awaiting approval." });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   };
 
-  const handleDelete = async (bookId: string) => {
+  const handleAddBook = async (newBook: any) => {
+    if (!profile?.institutionId) return;
     try {
-      const { error } = await supabase
-        .from('books')
-        .delete()
-        .eq('id', bookId);
-
-      if (error) {
-        toast({
-          title: "Error Deleting Book",
-          description: error.message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setBooks(books.filter((book) => book.id !== bookId));
-
-      toast({
-        title: "Book Deleted",
-        description: "The book has been successfully deleted.",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+      await createBook({ ...newBook, institutionId: profile.institutionId });
+      toast({ title: "Book added" });
+      setShowAddBook(false);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   };
 
-  const handleUpdateBook = async (updatedBook: Book) => {
-    try {
-      const { error } = await supabase
-        .from('books')
-        .update({
-          title: updatedBook.title,
-          authors: updatedBook.authors,
-          status: updatedBook.status,
-          summary: updatedBook.summary,
-          image_url: updatedBook.image_url,
-          genres: updatedBook.genres,
-          available: updatedBook.available,
-          total: updatedBook.total,
-          cover_type: updatedBook.cover_type,
-          publisher: updatedBook.publisher,
-          publish_date: updatedBook.publish_date,
-          isbn_13: updatedBook.isbn_13,
-          isbn_10: updatedBook.isbn_10,
-          language: updatedBook.language,
-        })
-        .eq('id', updatedBook.id);
-
-      if (error) {
-        toast({
-          title: "Error Updating Book",
-          description: error.message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setBooks(books.map((book) => (book.id === updatedBook.id ? updatedBook : book)));
-
-      toast({
-        title: "Book Updated",
-        description: "The book has been successfully updated.",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
+  const statusBadge = (book: { available: number }) => {
+    if (book.available > 0)
+      return <Badge variant="secondary">Available ({book.available})</Badge>;
+    return <Badge variant="destructive">Unavailable</Badge>;
   };
 
-  const filteredBooks = books.filter((book) => {
-    const matchesSearch =
-      searchQuery === "" ||
-      book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (book.authors && book.authors.join(", ").toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesGenre =
-      filterGenre === "all" || (book.genres && book.genres.join(", ").toLowerCase().includes(filterGenre.toLowerCase()));
-
-    return matchesSearch && matchesGenre;
-  });
-
-  // Student view
-  if (profile?.role === "student") {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Header />
-        <main className="max-w-7xl mx-auto px-4 py-8 mt-16">
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold">Books</h1>
-          </div>
-
-          <SearchFilterBar
-            type="books"
-            onSearch={({ searchQuery, genreFilter }) => {
-              setSearchQuery(searchQuery);
-              setFilterGenre(genreFilter);
-            }}
-          />
-
-          {isLoading ? (
-            <div className="flex justify-center items-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
-          ) : filteredBooks.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500">No books found.</p>
-              <p className="text-sm text-gray-400 mt-2">
-                {books.length > 0 ? "Try adjusting your search filters." : "There are no books in the library yet."}
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-              {filteredBooks.map((book) => (
-                <BookCard
-                  key={book.id}
-                  book={book}
-                  onView={() => {
-                    setSelectedBook(book);
-                    setModalType("view");
-                  }}
-                  onBorrow={handleBorrow}
-                  isStudent={true}
-                  institutionSettings={institutionSettings}
-                />
-              ))}
-            </div>
-          )}
-
-          {selectedBook && modalType === "view" && (
-            <ViewBookModal
-              book={selectedBook}
-              onClose={() => {
-                setSelectedBook(null);
-                setModalType(null);
-              }}
-            />
-          )}
-        </main>
-      </div>
-    );
-  }
-
-  // Staff view
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <main className="max-w-7xl mx-auto px-4 py-8 mt-16">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">Books</h1>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Books</h1>
+        <div className="flex items-center gap-2">
+          <div className="relative w-64">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search books..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          <Select value={filterGenre} onValueChange={setFilterGenre}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Genre" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Genres</SelectItem>
+              {(genres ?? []).map((g) => (
+                <SelectItem key={g._id} value={g.name}>
+                  {g.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex border rounded-md">
+            <Button
+              variant={viewMode === "grid" ? "secondary" : "ghost"}
+              size="icon"
+              className="rounded-r-none"
+              onClick={() => setViewMode("grid")}
+            >
+              <Grid3X3 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              size="icon"
+              className="rounded-l-none"
+              onClick={() => setViewMode("list")}
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
+          {isStaff && (
+            <Button onClick={() => setShowAddBook(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add Book
+            </Button>
+          )}
         </div>
+      </div>
 
-        <SearchFilterBar
-          type="books"
-          onSearch={({ searchQuery, genreFilter }) => {
-            setSearchQuery(searchQuery);
-            setFilterGenre(genreFilter);
-          }}
-        />
-
-        {isLoading ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-          </div>
-        ) : filteredBooks.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500">No books found.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
+      {filteredBooks.length === 0 && paginationStatus !== "LoadingFirstPage" ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <BookOpen className="h-12 w-12 mb-4" />
+            <p className="text-lg font-medium">No books found</p>
+            <p className="text-sm">
+              {books?.length ? "Try different search or filter." : "Add books to get started."}
+            </p>
+          </CardContent>
+        </Card>
+      ) : viewMode === "grid" ? (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredBooks.map((book) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                onView={() => {
-                  setSelectedBook(book);
-                  setModalType("view");
-                }}
-                onEdit={() => {
-                  setSelectedBook(book);
-                  setModalType("edit");
-                }}
-                onDelete={handleDelete}
-                onUpdate={handleUpdateBook}
-                onBorrow={handleBorrow}
-                institutionSettings={institutionSettings}
-                isStudent={false}
-              />
+              <Card key={book._id} className="overflow-hidden hover:shadow-md transition-shadow">
+                <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
+                  {book.imageUrl ? (
+                    <img
+                      src={book.imageUrl}
+                      alt={book.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <BookOpen className="h-12 w-12 text-muted-foreground/40" />
+                  )}
+                  <div className="absolute top-2 right-2">
+                    {statusBadge(book)}
+                  </div>
+                </div>
+                <CardContent className="p-3 space-y-1">
+                  <h3 className="font-medium text-sm line-clamp-1">{book.title}</h3>
+                  <p className="text-xs text-muted-foreground line-clamp-1">
+                    {book.authors.join(", ")}
+                  </p>
+                  {book.genres.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {book.genres.slice(0, 2).map((g) => (
+                        <Badge key={g} variant="outline" className="text-[10px] px-1 py-0">
+                          {g}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {isStudent && book.available > 0 && (
+                    <Button
+                      size="sm"
+                      className="w-full mt-2"
+                      onClick={() => handleBorrow(book._id)}
+                    >
+                      Request Borrow
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
             ))}
           </div>
-        )}
+          {paginationStatus === "CanLoadMore" && !searchQuery.trim() && (
+            <div className="flex justify-center pt-4">
+              <Button variant="outline" onClick={() => loadMore(50)}>
+                Load More
+              </Button>
+            </div>
+          )}
+          {paginationStatus === "LoadingMore" && (
+            <div className="flex justify-center pt-4">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Authors</TableHead>
+                    <TableHead>Genre</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>ISBN</TableHead>
+                    {isStudent && <TableHead className="text-right">Action</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredBooks.map((book) => (
+                    <TableRow key={book._id}>
+                      <TableCell className="font-medium">{book.title}</TableCell>
+                      <TableCell>{book.authors.join(", ")}</TableCell>
+                      <TableCell>{book.genres.join(", ") || "-"}</TableCell>
+                      <TableCell>{statusBadge(book)}</TableCell>
+                      <TableCell className="text-xs">
+                        {book.isbn13 ?? book.isbn10 ?? "-"}
+                      </TableCell>
+                      {isStudent && (
+                        <TableCell className="text-right">
+                          {book.available > 0 && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleBorrow(book._id)}
+                            >
+                              Request
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+          {paginationStatus === "CanLoadMore" && !searchQuery.trim() && (
+            <div className="flex justify-center pt-4">
+              <Button variant="outline" onClick={() => loadMore(50)}>
+                Load More
+              </Button>
+            </div>
+          )}
+        </>
+      )}
 
-        {selectedBook && modalType === "view" && (
-          <ViewBookModal
-            book={selectedBook}
-            onClose={() => {
-              setSelectedBook(null);
-              setModalType(null);
-            }}
-          />
-        )}
+      {paginationStatus === "LoadingFirstPage" && (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      )}
 
-        {selectedBook && modalType === "edit" && (
-          <EditBookModal
-            mode="edit"
-            book={selectedBook}
-            onClose={() => {
-              setSelectedBook(null);
-              setModalType(null);
-            }}
-            onSave={(updatedBook) => {
-              handleUpdateBook(updatedBook);
-              setSelectedBook(null);
-              setModalType(null);
-            }}
-          />
-        )}
-
-        {modalType === "add" && (
-          <AddBookDialog
-            isOpen={true}
-            onClose={() => setModalType(null)}
-            onSave={async (newBook) => {
-              try {
-                const { error } = await supabase.from("books").insert({
-                  ...newBook,
-                  institution_id: profile?.institution_id,
-                });
-
-                if (error) throw error;
-
-                toast({
-                  title: "Success",
-                  description: "Book added successfully",
-                });
-
-                fetchBooks();
-                setModalType(null);
-              } catch (error: any) {
-                toast({
-                  title: "Error",
-                  description: error.message,
-                  variant: "destructive",
-                });
-              }
-            }}
-          />
-        )}
-      </main>
+      {showAddBook && (
+        <AddBookDialog
+          isOpen={showAddBook}
+          onClose={() => setShowAddBook(false)}
+          onSave={handleAddBook}
+        />
+      )}
     </div>
   );
-};
-
-export default Books;
+}

@@ -1,169 +1,122 @@
-import { useEffect, useState } from "react";
-import Header from "@/components/Header";
-import { Loader2, Pencil, Trash2, Eye } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Loader2, Pencil, Trash2, Plus, Building2 } from "lucide-react";
 import { AddInstitutionModal } from "@/components/AddInstitutionModal";
-import { ViewInstitutionModal } from "@/components/ViewInstitutionModal";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Institution, Json } from "@/lib/data-types";
-import { Database } from "@/integrations/supabase/types";
+import { Card, CardContent } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import type { Doc } from "../../convex/_generated/dataModel";
 
-type InstitutionRow = Database['public']['Tables']['institutions']['Row'];
+type Institution = Doc<"institutions">;
 
 const Institutions = () => {
-  const [institutions, setInstitutions] = useState<Institution[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [editInstitution, setEditInstitution] = useState<Institution | null>(null);
-  const [showAddInstitutionModal, setShowAddInstitutionModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [institutionToDelete, setInstitutionToDelete] = useState<Institution | null>(null);
-  const [selectedInstitutionForView, setSelectedInstitutionForView] = useState<Institution | null>(null);
-  const [showViewInstitutionModal, setShowViewInstitutionModal] = useState(false);
+  const { toast } = useToast();
 
-  useEffect(() => {
-    fetchInstitutions();
-  }, []);
+  const institutions = useQuery(api.institutions.list) ?? [];
+  const removeInstitution = useMutation(api.institutions.remove);
+  const isLoading = institutions === undefined;
 
-  const fetchInstitutions = async () => {
-    setIsLoading(true);
-    const { data, error } = await supabase.from("institutions").select("*");
-    if (!error && data) {
-      const typedInstitutions: Institution[] = (data as InstitutionRow[]).map(inst => ({
-        ...inst,
-        organization_structure: inst.organization_structure as Json,
-        contact_phone: inst.contact_phone || undefined,
-        open_time: inst.open_time || undefined,
-        close_time: inst.close_time || undefined,
-        off_days: inst.off_days || undefined,
-        reserve_duration_days: inst.reserve_duration_days || 0,
-        loan_duration_days: inst.loan_duration_days || 0,
-        late_fine_per_day: inst.late_fine_per_day || 0,
-        rules: inst.rules || undefined,
-        admin_password: inst.admin_password || undefined
-      }));
-      
-      setInstitutions(typedInstitutions);
-    }
-    setIsLoading(false);
-  };
-
-  const handleEditInstitutionClick = (institution: Institution) => {
-    setEditInstitution(institution);
-    setShowAddInstitutionModal(true);
-  };
-
-  const handleViewDetailsClick = (institution: Institution) => {
-    setSelectedInstitutionForView(institution);
-    setShowViewInstitutionModal(true);
-  };
-
-  const handleDeleteInstitutionClick = (institution: Institution) => {
-    setInstitutionToDelete(institution);
-    setShowDeleteDialog(true);
-  };
-
-  const handleConfirmDeleteInstitution = async () => {
+  const handleConfirmDelete = async () => {
     if (!institutionToDelete) return;
-    const { error } = await supabase
-      .from('institutions')
-      .delete()
-      .eq('id', institutionToDelete.id);
-    if (!error) {
-      await fetchInstitutions();
+    try {
+      await removeInstitution({ id: institutionToDelete._id });
+      toast({ title: "Institution deleted" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
     setShowDeleteDialog(false);
     setInstitutionToDelete(null);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <main className="max-w-7xl mx-auto px-4 py-8 mt-16">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold">Institutions</h1>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Institutions</h1>
+        <Button onClick={() => { setEditInstitution(null); setShowAddModal(true); }}>
+          <Plus className="h-4 w-4 mr-1" />
+          Add Institution
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-        {isLoading ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-          </div>
-        ) : institutions.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500">No institutions found.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {institutions.map((institution) => (
-              <div
-                key={institution.id}
-                className="bg-white shadow-md rounded-lg p-6 flex flex-col gap-2 relative hover:shadow-lg hover:bg-gray-50 transition-all duration-200 cursor-pointer group"
-                onClick={() => handleViewDetailsClick(institution)}
-              >
-                <div className="absolute top-2 right-2 flex gap-2 z-10">
-                  <button
-                    className="p-1 rounded hover:bg-gray-200"
-                    onClick={e => { e.stopPropagation(); handleEditInstitutionClick(institution); }}
-                    title="Edit Institution"
+      ) : institutions.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <Building2 className="h-12 w-12 mb-4" />
+            <p className="text-lg font-medium">No institutions found</p>
+            <p className="text-sm">Add an institution to get started.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {institutions.map((inst) => (
+            <Card
+              key={inst._id}
+              className="hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => { setEditInstitution(inst); setShowAddModal(true); }}
+            >
+              <CardContent className="p-4 relative">
+                <div className="absolute top-2 right-2 flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => { e.stopPropagation(); setEditInstitution(inst); setShowAddModal(true); }}
                   >
-                    <Pencil className="h-4 w-4 text-blue-600" />
-                  </button>
-                  <button
-                    className="p-1 rounded hover:bg-gray-200"
-                    onClick={e => { e.stopPropagation(); handleDeleteInstitutionClick(institution); }}
-                    title="Delete Institution"
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive"
+                    onClick={(e) => { e.stopPropagation(); setInstitutionToDelete(inst); setShowDeleteDialog(true); }}
                   >
-                    <Trash2 className="h-4 w-4 text-red-600" />
-                  </button>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <h2 className="text-xl font-semibold mb-2 truncate" title={institution.name}>{institution.name}</h2>
-                <p className="mb-1"><span className="font-semibold">Address:</span> {institution.address}</p>
-                <p className="mb-1"><span className="font-semibold">Contact:</span> {institution.admin_email}<br />{institution.contact_phone}</p>
-              </div>
-            ))}
-          </div>
-        )}
-        {showAddInstitutionModal && editInstitution && (
-          <AddInstitutionModal
-            isOpen={showAddInstitutionModal}
-            institution={editInstitution}
-            onClose={() => {
-              setShowAddInstitutionModal(false);
-              setEditInstitution(null);
-            }}
-            onSuccess={() => {
-              fetchInstitutions();
-              setShowAddInstitutionModal(false);
-              setEditInstitution(null);
-            }}
-          />
-        )}
-        {showViewInstitutionModal && selectedInstitutionForView && (
-          <ViewInstitutionModal
-            isOpen={showViewInstitutionModal}
-            institution={selectedInstitutionForView}
-            onClose={() => {
-              setShowViewInstitutionModal(false);
-              setSelectedInstitutionForView(null);
-            }}
-          />
-        )}
-        {showDeleteDialog && institutionToDelete && (
-          <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Delete Institution</DialogTitle>
-              </DialogHeader>
-              <div>Are you sure you want to delete "{institutionToDelete.name}"? This action cannot be undone.</div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
-                <Button variant="destructive" onClick={handleConfirmDeleteInstitution}>Delete</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
-      </main>
+                <h2 className="text-lg font-semibold truncate pr-16">{inst.name}</h2>
+                <p className="text-sm text-muted-foreground mt-1">{inst.address}</p>
+                <p className="text-sm text-muted-foreground mt-1">{inst.adminEmail}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {showAddModal && (
+        <AddInstitutionModal
+          isOpen={showAddModal}
+          institution={editInstitution}
+          onClose={() => { setShowAddModal(false); setEditInstitution(null); }}
+          onSuccess={() => { setShowAddModal(false); setEditInstitution(null); }}
+        />
+      )}
+
+      {showDeleteDialog && institutionToDelete && (
+        <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Institution</DialogTitle>
+            </DialogHeader>
+            <p>Are you sure you want to delete "{institutionToDelete.name}"? This cannot be undone.</p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleConfirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
 
-export default Institutions; 
+export default Institutions;

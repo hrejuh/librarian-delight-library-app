@@ -1,63 +1,30 @@
 import { z } from "zod";
 
-// Book validation schema
 export const bookSchema = z.object({
   title: z.string().min(1, "Title is required"),
   authors: z.array(z.string()).min(1, "At least one author is required"),
-  genres: z.array(z.string()).min(1, "At least one genre is required"),
+  genres: z.array(z.string()),
   summary: z.string().optional(),
-  image_url: z.string().url("Invalid image URL").optional(),
-  status: z.enum(["Available", "Borrowed"]),
-  total: z.number().min(1, "Total must be at least 1"),
-  available: z.number().min(0, "Available must be 0 or greater"),
-  isbn_13: z.string().optional(),
-  isbn_10: z.string().optional(),
-  publish_date: z.string().optional(),
+  imageUrl: z.string().optional(),
+  status: z.string(),
+  available: z.number().min(0),
+  total: z.number().min(1, "Total copies must be at least 1"),
   publisher: z.string().optional(),
-  cover_type: z.enum(["Hardcover", "Paperback", "E-Book"]),
-  language: z.string().min(1, "Language is required"),
+  publishDate: z.string().optional(),
+  language: z.string().optional(),
+  isbn13: z.string().optional(),
+  isbn10: z.string().optional(),
+  coverType: z.string().optional(),
 });
 
-// Borrowing validation schema
-export const borrowingSchema = z.object({
-  book_id: z.string().uuid("Invalid book ID"),
-  user_id: z.string().uuid("Invalid user ID"),
-  institution_id: z.string().uuid("Invalid institution ID"),
-  borrow_date: z.string().datetime(),
-  due_date: z.string().datetime(),
-});
-
-// Request validation schema
-export const requestSchema = z.object({
-  book_id: z.string().uuid("Invalid book ID"),
-  user_id: z.string().uuid("Invalid user ID"),
-  institution_id: z.string().uuid("Invalid institution ID"),
-  status: z.enum(["pending", "approved", "rejected"]),
-  expiration_date: z.string().datetime(),
-});
-
-// User validation schema
-export const userSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  role: z.enum(["student", "librarian", "admin", "super_admin"]),
-  institution_id: z.string().uuid("Invalid institution ID"),
-});
-
-export const validateForm = <T>(schema: z.ZodSchema<T>, data: unknown): { success: boolean; data?: T; error?: string } => {
-  try {
-    const validatedData = schema.parse(data);
-    return { success: true, data: validatedData };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        error: error.errors.map(e => e.message).join(", ")
-      };
-    }
-    return {
-      success: false,
-      error: "Validation failed"
-    };
+export function validateForm<T>(
+  schema: z.ZodSchema<T>,
+  data: unknown,
+): { success: true; data: T } | { success: false; error: string } {
+  const result = schema.safeParse(data);
+  if (result.success) {
+    return { success: true, data: result.data };
   }
-}; 
+  const errors = result.error.errors.map((e) => e.message).join(", ");
+  return { success: false, error: errors };
+}

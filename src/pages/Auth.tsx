@@ -11,24 +11,24 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn, user } = useAuth();
+  const { signIn, profile } = useAuth();
   const navigate = useNavigate();
 
   // Redirect to dashboard if already logged in
   useEffect(() => {
-    if (user) {
+    if (profile) {
       navigate("/");
     }
-  }, [user, navigate]);
+  }, [profile, navigate]);
 
-  if (user) {
+  if (profile) {
     return null;
   }
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
+
     try {
       await signIn(email, password);
     } finally {
@@ -46,7 +46,7 @@ const Auth = () => {
           <h1 className="text-3xl font-bold">Library Management System</h1>
           <p className="text-gray-600 mt-2">Access your library account</p>
         </div>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Sign In</CardTitle>
@@ -54,7 +54,7 @@ const Auth = () => {
               Enter your credentials to access your account
             </CardDescription>
           </CardHeader>
-          
+
           <CardContent>
             <form onSubmit={handleSignIn} className="space-y-4">
               <div className="space-y-2">
@@ -68,7 +68,7 @@ const Auth = () => {
                   required
                 />
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <Input
@@ -80,9 +80,9 @@ const Auth = () => {
                   required
                 />
               </div>
-              
-              <Button 
-                type="submit" 
+
+              <Button
+                type="submit"
                 className="w-full bg-library-primary hover:bg-blue-700"
                 disabled={isLoading}
               >
@@ -90,7 +90,7 @@ const Auth = () => {
               </Button>
             </form>
           </CardContent>
-          
+
           <CardFooter className="flex justify-center">
             <p className="text-sm text-gray-500">
               Contact your administrator if you need access to the system

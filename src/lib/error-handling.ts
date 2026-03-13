@@ -71,48 +71,17 @@ export const handleError = (error: unknown): AppError => {
   const timestamp = Date.now();
   const stack = error instanceof Error ? error.stack : undefined;
 
-  // Handle Supabase errors
-  if (error && typeof error === 'object' && 'code' in error) {
-    const supabaseError = error as { code: string; message: string; details?: string };
-    
-    switch (supabaseError.code) {
-      case '23505': // Unique violation
-        return {
-          type: "VALIDATION_ERROR",
-          message: "Duplicate entry",
-          details: supabaseError.details || "This record already exists",
-          code: ERROR_CODES.VALIDATION.INVALID_INPUT,
-          timestamp,
-          stack
-        };
-      case '23503': // Foreign key violation
-        return {
-          type: "VALIDATION_ERROR",
-          message: "Reference error",
-          details: "Referenced record does not exist",
-          code: ERROR_CODES.VALIDATION.INVALID_INPUT,
-          timestamp,
-          stack
-        };
-      case '42P01': // Table not found
-        return {
-          type: "DATABASE_ERROR",
-          message: "Table not found",
-          details: "The requested table does not exist",
-          code: ERROR_CODES.DATABASE.QUERY_FAILED,
-          timestamp,
-          stack
-        };
-      case '28P01': // Invalid password
-        return {
-          type: "AUTH_ERROR",
-          message: ERROR_MESSAGES[ERROR_CODES.AUTH.INVALID_CREDENTIALS],
-          details: "Invalid credentials provided",
-          code: ERROR_CODES.AUTH.INVALID_CREDENTIALS,
-          timestamp,
-          stack
-        };
-    }
+  // Handle Convex errors
+  if (error && typeof error === 'object' && 'data' in error) {
+    const convexError = error as { data: unknown; message: string };
+    return {
+      type: "DATABASE_ERROR",
+      message: convexError.message || "A database error occurred",
+      details: typeof convexError.data === 'string' ? convexError.data : JSON.stringify(convexError.data),
+      code: ERROR_CODES.DATABASE.QUERY_FAILED,
+      timestamp,
+      stack,
+    };
   }
 
   // Handle known error types

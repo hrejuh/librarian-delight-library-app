@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building, Mail, Phone, Clock, BookOpen, Users, AlertCircle, Lock, Calendar, Sun, Moon, MapPin, User, Shield, Trash2, PlusCircle, X } from "lucide-react";
 import { Institution, ACCESS_LEVELS, Json } from "@/lib/data-types";
-import { OrganizationStructure } from "@/types/database";
+import { OrganizationStructure } from "@/lib/data-types";
 import { useToast } from "@/components/ui/use-toast";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,10 +33,11 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { useMutation, useAction } from "convex/react";
+import { api } from "../../convex/_generated/api";
 
 interface Level4UserConfig {
-  id: string; 
+  id: string;
   name: string;
   max_books: number;
   loan_duration: number;
@@ -65,10 +66,10 @@ interface InstitutionData {
   id: string;
   name: string;
   address: string;
-  admin_name: string;
-  admin_email: string;
-  contact_phone?: string;
-  organization_structure: {
+  adminName: string;
+  adminEmail: string;
+  contactPhone?: string;
+  organizationStructure: {
     level3: {
       libraries: Array<{ id?: string; name: string; address: string; is_default: boolean; }>;
       level3_role_names: string[];
@@ -149,13 +150,13 @@ const getInitialFormValues = (institution: Institution | null): FormData => {
     return {
       name: institution.name,
       address: institution.address,
-      admin_name: institution.admin_name,
-      admin_email: institution.admin_email,
-      contact_phone: institution.contact_phone || "",
-      level3_role_names: institution.organization_structure?.level3?.level3_role_names || ["Librarian", "Manager"],
-      resource_types: institution.organization_structure?.resource_types || ["Books", "Articles", "Magazines", "CDs", "Question Banks"],
-      level4_configs: institution.organization_structure?.level4?.configs && institution.organization_structure.level4.configs.length > 0 
-        ? institution.organization_structure.level4.configs.map(config => ({
+      admin_name: institution.adminName,
+      admin_email: institution.adminEmail,
+      contact_phone: institution.contactPhone || "",
+      level3_role_names: institution.organizationStructure?.level3?.level3_role_names || ["Librarian", "Manager"],
+      resource_types: institution.organizationStructure?.resource_types || ["Books", "Articles", "Magazines", "CDs", "Question Banks"],
+      level4_configs: institution.organizationStructure?.level4?.configs && institution.organizationStructure.level4.configs.length > 0
+        ? institution.organizationStructure.level4.configs.map(config => ({
             id: config.id || crypto.randomUUID(),
             name: config.name,
             max_books: config.max_books,
@@ -182,9 +183,12 @@ const getInitialFormValues = (institution: Institution | null): FormData => {
 export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }: AddInstitutionModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const { user } = useAuth();
+  const { profile } = useAuth();
   const [customRoleInput, setCustomRoleInput] = useState("");
   const [customResourceInput, setCustomResourceInput] = useState("");
+
+  const createInstitution = useAction(api.institutionActions.createWithAdmin);
+  const updateInstitution = useMutation(api.institutions.update);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -216,16 +220,15 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
   const validateForm = () => {
     const isValid = form.formState.isValid;
     const errors = form.formState.errors;
-    
+
     if (!isValid) {
-      console.log("[AddInstitutionModal] Form validation errors:", errors);
       const errorMessages = Object.entries(errors)
         .map(([field, error]) => `${field}: ${error.message}`)
         .join(", ");
       sonnerToast.error(`Please fix the following errors: ${errorMessages}`);
       return false;
     }
-    
+
     return true;
   };
 
@@ -250,34 +253,32 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
         resource_types: data.resource_types,
       } as OrganizationStructureLocal;
 
-      const institutionData = {
-        name: data.name,
-        address: data.address,
-        admin_name: data.admin_name,
-        admin_email: data.admin_email,
-        contact_phone: data.contact_phone || null,
-        organization_structure: organizationStructure as unknown as Json,
-      };
-
       if (institution) {
         // Update existing institution
-        const { error } = await supabase
-          .from("institutions")
-          .update(institutionData)
-          .eq("id", institution.id);
+        await updateInstitution({
+          id: institution._id,
+          name: data.name,
+          address: data.address,
+          adminName: data.admin_name,
+          adminEmail: data.admin_email,
+          organizationStructure: organizationStructure as any,
+        });
 
-        if (error) throw error;
         toast({
           title: "Success",
           description: "Institution updated successfully",
         });
       } else {
         // Create new institution
-        const { error } = await supabase
-          .from("institutions")
-          .insert([institutionData]);
+        await createInstitution({
+          name: data.name,
+          address: data.address,
+          adminName: data.admin_name,
+          adminEmail: data.admin_email,
+          adminPassword: data.admin_password,
+          organizationStructure: organizationStructure as any,
+        });
 
-        if (error) throw error;
         toast({
           title: "Success",
           description: "Institution created successfully",
@@ -331,7 +332,7 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
         .join(' ');
 
       const rolesArray = Array.isArray(currentRoles) ? currentRoles : [];
-      
+
       if (!rolesArray.map(role => role.toLowerCase()).includes(properCasedName.toLowerCase())) {
         form.setValue("level3_role_names", [...rolesArray, properCasedName], { shouldDirty: true, shouldValidate: true });
         setCustomRoleInput("");
@@ -355,7 +356,7 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
         .join(' ');
 
       const resourcesArray = form.watch("resource_types") || [];
-      
+
       if (!resourcesArray.map(resource => resource.toLowerCase()).includes(properCasedName.toLowerCase())) {
         form.setValue("resource_types", [...resourcesArray, properCasedName], { shouldDirty: true, shouldValidate: true });
         setCustomResourceInput("");
@@ -390,40 +391,13 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
     allClientValidationsPassed = await form.trigger(fieldsToValidate);
 
     if (allClientValidationsPassed) {
-      if (activeTab === 'basic' && !institution) {
-        const adminEmail = form.getValues("admin_email");
-        if (adminEmail) {
-          try {
-            const { data: existingProfiles, error: profileError } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('email', adminEmail);
-
-            if (profileError) {
-              console.error("Error checking profile existence:", profileError);
-              sonnerToast.error("Could not validate admin email. Please try again.");
-              return;
-            }
-
-            if (existingProfiles && existingProfiles.length > 0) {
-              form.setError("admin_email", { type: "manual", message: "This email address is already registered. Please use a different email." });
-              sonnerToast.error("This email address is already in use.");
-              return;
-            }
-          } catch (e) {
-            console.error("Exception checking profile existence:", e);
-            sonnerToast.error("An error occurred validating the admin email.");
-            return;
-          }
-        }
-      }
+      // Note: email uniqueness check is now handled server-side by the Convex mutation
       setMaxValidatedStep(Math.max(maxValidatedStep, currentTabIndex));
       if (currentTabIndex < TABS.length - 1) {
         setActiveTab(TABS[currentTabIndex + 1]);
       }
     } else {
       sonnerToast.error("Please fix the errors on the current tab before proceeding.");
-      console.log("Form errors:", form.formState.errors);
     }
   };
 
@@ -433,10 +407,9 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
   const { errors: formErrors } = form.formState;
 
   return (
-    <Dialog 
-      open={isOpen} 
+    <Dialog
+      open={isOpen}
       onOpenChange={(open) => {
-        console.log("[AddInstitutionModal] Dialog onOpenChange called:", { open });
         if (!open) {
           onClose();
         }
@@ -553,7 +526,7 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
                       <div className="flex items-center justify-between">
                         <FormLabel className="text-sm font-medium">Level 3 Roles</FormLabel>
                         <div className="flex items-center gap-2">
-                          <Input 
+                          <Input
                             placeholder="Add role..."
                             value={customRoleInput}
                             onChange={(e) => setCustomRoleInput(e.target.value)}
@@ -563,19 +536,19 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
                           <Button type="button" size="sm" onClick={handleAddRole}>Add</Button>
                         </div>
                       </div>
-                      
+
                       <div className="flex flex-wrap gap-2 min-h-[28px]">
                         {(form.watch("level3_role_names") || [])?.map((role) => (
                           <div key={role} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted text-sm whitespace-nowrap">
                             <span>{role}</span>
-                            <Button 
+                            <Button
                               type="button"
-                              variant="ghost" 
-                              size="icon" 
+                              variant="ghost"
+                              size="icon"
                               className="h-5 w-5 hover:bg-destructive/10 p-0"
                               onClick={() => handleRemoveRole(role)}
                             >
-                              <X className="h-3 w-3 text-destructive" /> 
+                              <X className="h-3 w-3 text-destructive" />
                               <span className="sr-only">Remove {role}</span>
                             </Button>
                           </div>
@@ -593,7 +566,7 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
                       <div className="flex items-center justify-between">
                         <FormLabel className="text-sm font-medium">Resource Types</FormLabel>
                         <div className="flex items-center gap-2">
-                          <Input 
+                          <Input
                             placeholder="Add resource type..."
                             value={customResourceInput}
                             onChange={(e) => setCustomResourceInput(e.target.value)}
@@ -603,19 +576,19 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
                           <Button type="button" size="sm" onClick={handleAddResource}>Add</Button>
                         </div>
                       </div>
-                      
+
                       <div className="flex flex-wrap gap-2 min-h-[28px]">
                         {(form.watch("resource_types") || [])?.map((resource) => (
                           <div key={resource} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted text-sm whitespace-nowrap">
                             <span>{resource}</span>
-                            <Button 
+                            <Button
                               type="button"
-                              variant="ghost" 
-                              size="icon" 
+                              variant="ghost"
+                              size="icon"
                               className="h-5 w-5 hover:bg-destructive/10 p-0"
                               onClick={() => handleRemoveResource(resource)}
                             >
-                              <X className="h-3 w-3 text-destructive" /> 
+                              <X className="h-3 w-3 text-destructive" />
                               <span className="sr-only">Remove {resource}</span>
                             </Button>
                           </div>
@@ -636,13 +609,13 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
                     <CardTitle>Level 4 User Configurations</CardTitle>
                     <Button
                       type="button"
-                      onClick={() => appendLevel4Config({ 
-                        id: crypto.randomUUID(), 
-                        name: "New User Type", 
-                        max_books: 1, 
-                        loan_duration: 7, 
-                        reservation_duration: 3, 
-                        fine_per_day: 0 
+                      onClick={() => appendLevel4Config({
+                        id: crypto.randomUUID(),
+                        name: "New User Type",
+                        max_books: 1,
+                        loan_duration: 7,
+                        reservation_duration: 3,
+                        fine_per_day: 0
                       })}
                     >
                       Add User Type
@@ -769,9 +742,9 @@ export function AddInstitutionModal({ isOpen, onClose, onSuccess, institution }:
               </Button>
               </div>
               <div className="flex space-x-3">
-                <Button 
-                  type="button" 
-                  variant="outline" 
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => setActiveTab(TABS[currentTabIndex - 1])}
                   disabled={currentTabIndex === 0}
                   className={cn(currentTabIndex === 0 && "opacity-50 cursor-not-allowed")}

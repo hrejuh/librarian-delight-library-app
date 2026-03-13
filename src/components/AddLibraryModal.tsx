@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { supabase } from "@/lib/supabase";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -29,16 +30,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Institution } from "@/types/database";
-import { Database } from "@/integrations/supabase/types";
 import { Loader2 } from "lucide-react";
 import { Trash2 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
-type Library = Database["public"]["Tables"]["libraries"]["Row"] & {
+interface Library {
+  _id: string;
+  institutionId: string;
+  name: string;
+  address: string;
+  contactNumber?: string;
+  openTime?: string;
+  closeTime?: string;
+  daysClosed?: string[];
+  resources?: string[];
+  shelves?: any[];
+  managedBy?: string[];
+  userTypes?: string[];
   institutions?: {
     name: string;
   };
-};
+}
 
 const DAYS_OF_WEEK = [
   "Sunday",
@@ -58,63 +70,50 @@ interface AddLibraryModalProps {
 }
 
 const formSchema = z.object({
-  institution_id: z.string().min(1, "Institution is required"),
+  institutionId: z.string().min(1, "Institution is required"),
   name: z.string().min(1, "Library name is required"),
   address: z.string().min(1, "Address is required"),
-  contact_number: z.string().min(1, "Contact number is required"),
-  open_time: z.string().min(1, "Open time is required"),
-  close_time: z.string().min(1, "Close time is required"),
-  days_closed: z.array(z.string()),
+  contactNumber: z.string().min(1, "Contact number is required"),
+  openTime: z.string().min(1, "Open time is required"),
+  closeTime: z.string().min(1, "Close time is required"),
+  daysClosed: z.array(z.string()),
   resources: z.array(z.string()),
   shelves: z.array(z.object({
     id: z.string().optional(),
     description: z.string().optional(),
   })),
-  managed_by: z.array(z.string()),
-  user_types: z.array(z.string()),
+  managedBy: z.array(z.string()),
+  userTypes: z.array(z.string()),
 });
 
 export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibraryModalProps) {
-  const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { profile } = useAuth();
+
+  // Fetch institutions via Convex (automatically real-time)
+  const institutions = useQuery(api.institutions.list) ?? [];
+
+  const createLibrary = useMutation(api.libraries.create);
+  const updateLibrary = useMutation(api.libraries.update);
+  const removeLibrary = useMutation(api.libraries.remove);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      institution_id: library?.institution_id || "",
+      institutionId: library?.institutionId || "",
       name: library?.name || "",
       address: library?.address || "",
-      contact_number: library?.contact_number || "",
-      open_time: library?.open_time || "09:00",
-      close_time: library?.close_time || "17:00",
-      days_closed: library?.days_closed || [],
+      contactNumber: library?.contactNumber || "",
+      openTime: library?.openTime || "09:00",
+      closeTime: library?.closeTime || "17:00",
+      daysClosed: library?.daysClosed || [],
       resources: library?.resources || [],
       shelves: library?.shelves || [],
-      managed_by: library?.managed_by || [],
-      user_types: library?.user_types || [],
+      managedBy: library?.managedBy || [],
+      userTypes: library?.userTypes || [],
     },
   });
-
-  useEffect(() => {
-    fetchInstitutions();
-  }, []);
-
-  const fetchInstitutions = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("institutions")
-        .select("*");
-      if (error) throw error;
-      setInstitutions(data as unknown as Institution[]);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  };
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     setIsLoading(true);
@@ -125,53 +124,39 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
       }));
 
       if (library) {
-        const updateData: Database["public"]["Tables"]["libraries"]["Update"] = {
+        await updateLibrary({
+          id: library._id as any,
           name: values.name,
           address: values.address,
-          institution_id: values.institution_id,
-          contact_number: values.contact_number,
-          open_time: values.open_time,
-          close_time: values.close_time,
-          days_closed: values.days_closed,
+          institutionId: values.institutionId as any,
+          contactNumber: values.contactNumber,
+          openTime: values.openTime,
+          closeTime: values.closeTime,
+          daysClosed: values.daysClosed,
           resources: values.resources,
           shelves,
-          managed_by: values.managed_by,
-          user_types: values.user_types,
-          updated_at: new Date().toISOString(),
-        };
-
-        const { error: updateError } = await supabase
-          .from("libraries")
-          .update(updateData)
-          .eq("id", library.id);
-
-        if (updateError) throw updateError;
+          managedBy: values.managedBy,
+          userTypes: values.userTypes,
+        });
 
         toast({
           title: "Success",
           description: "Library updated successfully",
         });
       } else {
-        const insertData: Database["public"]["Tables"]["libraries"]["Insert"] = {
+        await createLibrary({
           name: values.name,
           address: values.address,
-          institution_id: values.institution_id,
-          contact_number: values.contact_number,
-          open_time: values.open_time,
-          close_time: values.close_time,
-          days_closed: values.days_closed,
+          institutionId: values.institutionId as any,
+          contactNumber: values.contactNumber,
+          openTime: values.openTime,
+          closeTime: values.closeTime,
+          daysClosed: values.daysClosed,
           resources: values.resources,
           shelves,
-          managed_by: values.managed_by,
-          user_types: values.user_types,
-          created_by: (await supabase.auth.getUser()).data.user?.id || "",
-        };
-
-        const { error: insertError } = await supabase
-          .from("libraries")
-          .insert(insertData);
-
-        if (insertError) throw insertError;
+          managedBy: values.managedBy,
+          userTypes: values.userTypes,
+        });
 
         toast({
           title: "Success",
@@ -192,12 +177,12 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
   };
 
   const selectedInstitution = institutions.find(
-    (inst) => inst.id === form.watch("institution_id")
+    (inst) => inst._id === form.watch("institutionId")
   );
 
-  const libraryManagerRoles = selectedInstitution?.organization_structure?.level3?.level3_role_names || [];
-  const userTypeConfigs = selectedInstitution?.organization_structure?.level4?.configs || [];
-  const resourceTypes = selectedInstitution?.organization_structure?.resource_types || [];
+  const libraryManagerRoles = selectedInstitution?.organizationStructure?.level3?.level3_role_names || [];
+  const userTypeConfigs = selectedInstitution?.organizationStructure?.level4?.configs || [];
+  const resourceTypes = selectedInstitution?.organizationStructure?.resource_types || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -210,7 +195,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
             {/* Institution Selection */}
             <FormField
               control={form.control}
-              name="institution_id"
+              name="institutionId"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Institution</FormLabel>
@@ -226,7 +211,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
                     </FormControl>
                     <SelectContent>
                       {institutions.map((institution) => (
-                        <SelectItem key={institution.id} value={institution.id}>
+                        <SelectItem key={institution._id} value={institution._id}>
                           {institution.name}
                         </SelectItem>
                       ))}
@@ -254,7 +239,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
               />
               <FormField
                 control={form.control}
-                name="contact_number"
+                name="contactNumber"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Contact Number</FormLabel>
@@ -285,7 +270,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="open_time"
+                name="openTime"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Open Time</FormLabel>
@@ -298,7 +283,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
               />
               <FormField
                 control={form.control}
-                name="close_time"
+                name="closeTime"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Close Time</FormLabel>
@@ -314,7 +299,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
             {/* Days Closed */}
             <FormField
               control={form.control}
-              name="days_closed"
+              name="daysClosed"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Days Closed</FormLabel>
@@ -443,7 +428,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
             {/* Managed By */}
             <FormField
               control={form.control}
-              name="managed_by"
+              name="managedBy"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Managed By</FormLabel>
@@ -474,7 +459,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
             {/* User Types */}
             <FormField
               control={form.control}
-              name="user_types"
+              name="userTypes"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>User Types</FormLabel>
@@ -511,11 +496,7 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
                     if (!library) return;
                     setIsLoading(true);
                     try {
-                      const { error } = await supabase
-                        .from("libraries")
-                        .delete()
-                        .eq("id", library.id);
-                      if (error) throw error;
+                      await removeLibrary({ id: library._id as any });
                       toast({
                         title: "Success",
                         description: "Library deleted successfully",
@@ -548,4 +529,4 @@ export function AddLibraryModal({ isOpen, library, onClose, onSuccess }: AddLibr
       </DialogContent>
     </Dialog>
   );
-} 
+}
